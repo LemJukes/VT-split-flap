@@ -1,0 +1,105 @@
+body {
+    background-color: #222;
+    font: 58px "Roboto Condensed";
+    color: #ecdb41;
+    text-align: center;
+}
+
+div {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+}
+
+span {
+    position: relative;
+}
+
+.container {
+    top: 20px;
+    left: 6px;
+}
+
+.flap {
+    width: 55px;
+    right: auto;
+}
+
+.half {
+    height: 31px;
+    overflow: hidden;
+    background: #444;
+    transform-style: preserve-3d;
+    animation-timing-function: ease-in;
+    animation-duration: 0.28s;
+    animation-iteration-count: infinite;
+}
+
+.fast .half {
+    animation-duration: 0.14s;
+}
+
+.divider {
+    top: 31px;
+    height: 2px;
+    background: #222;
+}
+
+.prev {
+    top: 31px;
+}
+
+.back,
+.front {
+    backface-visibility: hidden;
+}
+
+.front {
+    transform-origin: center bottom;
+}
+
+.back {
+    top: 31px;
+    transform-origin: center top;
+}
+
+.front span,
+.next span {
+    top: -2px;
+}
+
+.back span,
+.prev span {
+    top: -34px;
+}
+
+.animated .front {
+    animation-name: flipFront;
+}
+
+.animated .back {
+    animation-name: flipBack;
+}
+
+@keyframes flipFront {
+    0% {
+        transform: rotateX(0deg);
+        background-color: #444;
+    }
+    100% {
+        transform: rotateX(180deg);
+        background-color: #1c1c1c;
+    }
+}
+
+@keyframes flipBack {
+    0% {
+        transform: rotateX(180deg);
+        background-color: #222;
+    }
+    100% {
+        transform: rotateX(0deg);
+        background-color: #444;
+    }
+}
