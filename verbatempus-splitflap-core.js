@@ -47,12 +47,19 @@ function getTimeInWords() {
     }
 
     if (minute in specialMinutes) {
-        minuteWord = specialMinutes[minute];
+        // Handle quarter/half/three quarters past
+        if (minute === 15) {
+            return `IT IS NOW QUARTER PAST ${hourWord}`;
+        } else if (minute === 30) {
+            return `IT IS NOW HALF PAST ${hourWord}`;
+        } else if (minute === 45) {
+            return `IT IS NOW QUARTER TO ${hours[(hour + 1) % 24]}`;
+        }
     }
-
+    
     if (minute === 1) {
         return `IT IS NOW ONE MINUTE PAST ${hourWord}`;
-    } else if (minute <= 30) {
+    } else if (minute < 30) {
         return `IT IS NOW ${minuteWord} MINUTES PAST ${hourWord}`;
     } else {
         const nextHourWord = hours[(hour + 1) % 24];
