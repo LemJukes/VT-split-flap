@@ -1,105 +1,277 @@
-body {
-    background-color: #222;
-    font: 58px "Roboto Condensed";
-    color: #ecdb41;
-    text-align: center;
+:root {
+    --board-columns: 12;
+    --board-rows: 6;
+    --cell-width: 64px;
+    --cell-height: 78px;
+    --flap-width: 58px;
+    --flap-height: 68px;
+    --half-height: 33px;
+    --board-padding: 28px;
+    --board-perspective: 1400px;
+    --display-font-size: 56px;
+    --front-letter-offset: -4px;
+    --back-letter-offset: -38px;
+    --flip-duration: 0.28s;
+    --fast-flip-duration: 0.12s;
+    --hinge-gap: 2px;
+    --display-ink: #f1d25f;
+    --display-highlight: #ffe6a6;
+    --surface-top: #54504c;
+    --surface-bottom: #35322f;
+    --surface-shadow: #1b1917;
+    --surface-frame: #0e0d0c;
+    --board-frame-top: #4a4338;
+    --board-frame-bottom: #191715;
 }
 
-div {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
+* {
+    box-sizing: border-box;
+}
+
+body {
+    min-height: 100vh;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    background:
+        radial-gradient(circle at top, rgba(205, 162, 72, 0.18), transparent 30%),
+        linear-gradient(180deg, #26211d 0%, #181513 45%, #0f0d0c 100%);
+    font-family: "Roboto Condensed", sans-serif;
+    color: var(--display-ink);
+}
+
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background:
+        linear-gradient(90deg, rgba(255, 255, 255, 0.015) 0, rgba(255, 255, 255, 0) 22%, rgba(255, 255, 255, 0.015) 50%, rgba(255, 255, 255, 0) 78%, rgba(255, 255, 255, 0.015) 100%),
+        radial-gradient(circle at center, rgba(255, 255, 255, 0.04), transparent 65%);
+    pointer-events: none;
 }
 
 span {
     position: relative;
+    display: block;
 }
 
 .container {
-    top: 1%;
-    left: 1%;
+    position: relative;
+    display: grid;
+    grid-template-rows: repeat(var(--board-rows), var(--cell-height));
+    gap: 0;
+    padding: var(--board-padding);
+    border-radius: 18px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 16%),
+        linear-gradient(180deg, var(--board-frame-top), var(--board-frame-bottom));
+    border: 1px solid rgba(255, 236, 184, 0.08);
+    box-shadow:
+        0 32px 80px rgba(0, 0, 0, 0.5),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08),
+        inset 0 -18px 30px rgba(0, 0, 0, 0.35);
+    perspective: var(--board-perspective);
+    transform: rotateX(8deg);
+    transform-style: preserve-3d;
+}
+
+.container::before {
+    content: "";
+    position: absolute;
+    inset: 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    pointer-events: none;
+}
+
+.row {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(var(--board-columns), var(--cell-width));
+    align-items: start;
+    justify-items: center;
 }
 
 .flap {
-    width: 55px;
+    position: relative;
+    width: var(--flap-width);
+    height: var(--flap-height);
     right: auto;
+    transform-style: preserve-3d;
+    filter: drop-shadow(0 10px 12px rgba(0, 0, 0, 0.28));
+}
+
+.flap::before,
+.flap::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    pointer-events: none;
+}
+
+.flap::before {
+    top: 0;
+    bottom: 0;
+    border-radius: 8px;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.09),
+        inset 0 -2px 0 rgba(0, 0, 0, 0.35),
+        0 0 0 1px rgba(0, 0, 0, 0.3);
+}
+
+.flap::after {
+    top: 5px;
+    height: 14px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0));
+    opacity: 0.35;
+}
+
+.half,
+.divider {
+    position: absolute;
+    left: 0;
+    width: 100%;
 }
 
 .half {
-    height: 31px;
     overflow: hidden;
-    background: #444;
+    height: var(--half-height);
+    color: var(--display-ink);
+    text-shadow: 0 0 10px rgba(255, 203, 76, 0.15);
     transform-style: preserve-3d;
-    animation-timing-function: ease-in;
-    animation-duration: 0.28s;
+    animation-duration: var(--flip-duration);
     animation-iteration-count: infinite;
+    animation-fill-mode: both;
+    backface-visibility: hidden;
 }
 
-.fast .half {
-    animation-duration: 0.14s;
+.half::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 28%, rgba(0, 0, 0, 0.18) 100%);
+    pointer-events: none;
 }
 
-.divider {
-    top: 31px;
-    height: 2px;
-    background: #222;
-}
-
-.prev {
-    top: 31px;
+.front,
+.next {
+    top: 0;
+    border-radius: 7px 7px 2px 2px;
+    background: linear-gradient(180deg, #69645f 0%, var(--surface-top) 40%, #494541 100%);
 }
 
 .back,
-.front {
-    backface-visibility: hidden;
+.prev {
+    top: calc(var(--half-height) + var(--hinge-gap));
+    border-radius: 2px 2px 7px 7px;
+    background: linear-gradient(180deg, #3b3734 0%, var(--surface-bottom) 58%, #24211f 100%);
 }
 
 .front {
     transform-origin: center bottom;
+    z-index: 4;
 }
 
 .back {
-    top: 31px;
+    transform: rotateX(180deg);
     transform-origin: center top;
+    z-index: 2;
+}
+
+.next {
+    z-index: 1;
+}
+
+.prev {
+    z-index: 3;
+}
+
+.divider {
+    top: var(--half-height);
+    height: var(--hinge-gap);
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(0, 0, 0, 0.75));
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.45),
+        inset 0 1px 1px rgba(255, 255, 255, 0.15),
+        0 1px 3px rgba(0, 0, 0, 0.6);
+    z-index: 5;
+}
+
+.half span {
+    width: 100%;
+    text-align: center;
+    font-size: var(--display-font-size);
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: var(--display-ink);
 }
 
 .front span,
 .next span {
-    top: -2px;
+    top: var(--front-letter-offset);
 }
 
 .back span,
 .prev span {
-    top: -34px;
+    top: var(--back-letter-offset);
 }
 
 .animated .front {
     animation-name: flipFront;
+    animation-timing-function: cubic-bezier(0.46, 0.03, 0.52, 0.96);
 }
 
 .animated .back {
     animation-name: flipBack;
+    animation-timing-function: cubic-bezier(0.22, 0.82, 0.32, 1);
+}
+
+.animated .front,
+.animated .back {
+    will-change: transform, filter;
+}
+
+.fast .half {
+    animation-duration: var(--fast-flip-duration);
 }
 
 @keyframes flipFront {
     0% {
         transform: rotateX(0deg);
-        background-color: #444;
+        filter: brightness(1);
+    }
+    42% {
+        filter: brightness(0.96);
     }
     100% {
         transform: rotateX(180deg);
-        background-color: #1c1c1c;
+        filter: brightness(0.72);
     }
 }
 
 @keyframes flipBack {
     0% {
         transform: rotateX(180deg);
-        background-color: #222;
+        filter: brightness(0.68);
+    }
+    58% {
+        filter: brightness(1.08);
     }
     100% {
         transform: rotateX(0deg);
-        background-color: #444;
+        filter: brightness(1);
+    }
+}
+
+@media (max-width: 980px) {
+    .container {
+        transform: none;
+        max-width: calc(100vw - 24px);
+        overflow: auto;
     }
 }
