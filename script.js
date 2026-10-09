@@ -1,305 +1,254 @@
-// Needs vendor/verbatempus.iife.js (global Verbatempus) and layout.js (global SplitFlapLayout).
-const { BLANK_CHARACTER, normalizeText, wrapWords, splitIntoRows, splitDisplay, rowsForLevel } = SplitFlapLayout;
+// VT-split-flap: the board.
+// Builds a grid of flap modules, turns each one forward a symbol at a time with the Web Animations
+// API, and keeps the board on the time (or on ?phrase=). A classic script: it relies on the globals
+// Verbatempus (vendor/verbatempus.iife.js), SplitFlapLayout (layout.js) and SplitFlapLogic
+// (board-logic.js), which index.html loads before it.
+(function () {
+    'use strict';
 
-const LEVELS = ['verbose', 'lengthy', 'short', 'terse'];
-const queryParams = new URLSearchParams(window.location.search);
-const level = getConfiguredLevel();
+    const Clock = window.Verbatempus;
+    const Layout = window.SplitFlapLayout;
+    const Logic = window.SplitFlapLogic;
 
-const BOARD = {
-    rows: 0, // sized below from the phrasing contract
-    columns: 12,
-    cellWidth: 64,
-    cellHeight: 78,
-    flapWidth: 58,
-    flapHeight: 68,
-    halfHeight: 33,
-    boardPadding: 28,
-    fontSize: 56,
-    frontOffset: -4,
-    backOffset: -38,
-    perspective: 1400,
-    timings: {
-        bootDelay: 2200,
-        initialWaveDelay: 220,
-        updateInterval: getConfiguredInterval(),
-        rowStagger: 72,
-        columnStagger: 28,
-        startVariance: 14
-    }
-};
+    const COLUMNS = 12;
+    const FIRST_UPDATE_MS = 2200;
 
-const INITIAL_MESSAGE = 'VERBA TEMPUS A CLOCK FULL OF WORDS';
-const CHARACTER_SET = `${BLANK_CHARACTER}ABCDEFGHIJKLMNOPQRSTUVWXYZ`;
-const previewPhrase = normalizeText(queryParams.get('phrase') || '');
-const cycle = createCycleMap(CHARACTER_SET);
+    // One step: the upper leaf swings half a turn about the hinge, forward and down.
+    const LEAF_FALL = [
+        { transform: 'rotateX(0deg)' },
+        { transform: 'rotateX(-180deg)' }
+    ];
 
-// Tall enough for the longest phrase this level can produce, so nothing is ever truncated.
-BOARD.rows = Math.max(
-    rowsForLevel(Verbatempus.format, level, BOARD.columns),
-    wrapWords(INITIAL_MESSAGE, BOARD.columns).length
-);
+    // The leaf dims as it turns away from the light. These share LEAF_FALL's timing, so offset 0.5
+    // is the moment the leaf stands vertical and its front face goes edge-on.
+    const DIMMED = 'brightness(0.7)';
+    const LIT = 'brightness(1)';
+    const FRONT_DIMMING = [
+        { offset: 0, filter: LIT },
+        { offset: 0.5, filter: DIMMED },
+        { offset: 1, filter: DIMMED }
+    ];
+    const BACK_BRIGHTENING = [
+        { offset: 0, filter: DIMMED },
+        { offset: 0.5, filter: DIMMED },
+        { offset: 1, filter: LIT }
+    ];
 
-let currentRows = splitIntoRows(INITIAL_MESSAGE, BOARD.columns, BOARD.rows);
-let currentDisplay = currentRows.join('');
-let isAnimating = false;
-let queuedDisplay = null;
+    // Slow to leave the stack, quicker as it drops.
+    const FALL_EASING = 'cubic-bezier(0.5, 0.05, 0.8, 0.5)';
 
-const container = document.querySelector('.container');
-applyBoardVariables(container, BOARD);
+    const options = Logic.parseOptions(window.location.search);
+    const rowCount = Logic.rowsNeeded(Layout, Clock.format, options.level, COLUMNS, Logic.BOOT_MESSAGE);
+    const motionQuery = typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-reduced-motion: reduce)')
+        : null;
+    const canAnimate = typeof Element !== 'undefined' && typeof Element.prototype.animate === 'function';
 
-const flaps = buildBoard(container, createBoardState(currentRows));
+    // ---- DOM -------------------------------------------------------------------------------
 
-window.setTimeout(() => {
-    updateDisplay();
-
-    if (BOARD.timings.updateInterval) {
-        window.setInterval(updateDisplay, BOARD.timings.updateInterval);
-    } else {
-        scheduleNextMinute(updateDisplay);
-    }
-}, BOARD.timings.bootDelay);
-
-function buildBoard(root, rowData) {
-    const built = [];
-
-    rowData.forEach((row) => {
-        const rowElement = createElement('div', 'row');
-
-        row.forEach((cell) => {
-            const flap = createElement('div', 'flap');
-            flap.dataset.row = cell.rowIndex;
-            flap.dataset.column = cell.columnIndex;
-
-            ['next', 'prev', 'back', 'front'].forEach((segment) => {
-                if (segment === 'front') {
-                    flap.appendChild(createElement('div', 'divider'));
-                }
-
-                const half = createElement('div', `half ${segment}`);
-                const letter = createElement('span');
-                letter.textContent = cell.letter;
-                half.appendChild(letter);
-                flap.appendChild(half);
-            });
-
-            rowElement.appendChild(flap);
-            built.push({ element: flap, cell });
-        });
-
-        root.appendChild(rowElement);
-    });
-
-    return built;
-}
-
-function updateDisplay() {
-    const nextRows = splitIntoRows(getDisplayText(), BOARD.columns, BOARD.rows);
-    const nextDisplay = nextRows.join('');
-
-    if (nextDisplay === currentDisplay) {
-        return;
+    function make(tag, className) {
+        const node = document.createElement(tag);
+        node.className = className;
+        return node;
     }
 
-    if (isAnimating) {
-        queuedDisplay = nextDisplay;
-        return;
+    // A half-height flap surface holding one full-height glyph, of which it shows the top
+    // (sf-panel--top) or the bottom (sf-panel--bottom).
+    function makePanel(className) {
+        const face = make('div', 'sf-panel ' + className);
+        const glyph = make('span', 'sf-glyph');
+        face.appendChild(glyph);
+        return { face, glyph };
     }
 
-    flipToDisplay(nextDisplay);
-}
+    // One module: fixed upper and lower halves, the hinge line, and a leaf that is only shown
+    // while turning. The leaf's front looks like an upper half and its back like a lower half.
+    function makeCell(symbol) {
+        const slot = make('div', 'sf-slot');
+        const module = make('div', 'sf-module');
+        const upper = makePanel('sf-panel--top sf-upper');
+        const lower = makePanel('sf-panel--bottom sf-lower');
+        const leaf = make('div', 'sf-leaf');
+        const front = makePanel('sf-panel--top sf-leaf-front');
+        const back = makePanel('sf-panel--bottom sf-leaf-back');
 
-function flipToDisplay(targetDisplay) {
-    const transitions = [];
-    isAnimating = true;
+        leaf.appendChild(front.face);
+        leaf.appendChild(back.face);
+        module.appendChild(upper.face);
+        module.appendChild(lower.face);
+        module.appendChild(leaf);
+        module.appendChild(make('div', 'sf-hinge'));
+        slot.appendChild(module);
 
-    flaps.forEach(({ element, cell }) => {
-        const toLetter = targetDisplay[cell.index] || BLANK_CHARACTER;
+        const cell = { slot, module, upper, lower, leaf, front, back, symbol: Layout.BLANK_CHARACTER };
+        restOn(cell, symbol);
+        return cell;
+    }
 
-        if (cell.letter === toLetter) {
-            return;
+    // Show `symbol` on both halves, with no motion.
+    function restOn(cell, symbol) {
+        cell.symbol = symbol;
+        cell.upper.glyph.textContent = symbol;
+        cell.lower.glyph.textContent = symbol;
+    }
+
+    function buildBoard(host, text) {
+        const frame = make('div', 'sf-board');
+        frame.setAttribute('role', 'img');
+
+        const grid = make('div', 'sf-grid');
+        grid.setAttribute('aria-hidden', 'true');
+        grid.style.setProperty('--sf-columns', String(COLUMNS));
+
+        const cells = [];
+        for (let index = 0; index < text.length; index += 1) {
+            const cell = makeCell(text[index]);
+            cells.push(cell);
+            grid.appendChild(cell.slot);
         }
 
-        transitions.push(scheduleFlip(element, cell, toLetter));
-    });
+        frame.appendChild(grid);
+        host.appendChild(frame);
+        return { frame, cells };
+    }
 
-    Promise.all(transitions).then(() => {
-        currentDisplay = targetDisplay;
-        currentRows = splitDisplay(currentDisplay, BOARD.columns);
-        isAnimating = false;
+    // ---- Motion ----------------------------------------------------------------------------
 
-        if (queuedDisplay && queuedDisplay !== currentDisplay) {
-            const pendingDisplay = queuedDisplay;
-            queuedDisplay = null;
-            flipToDisplay(pendingDisplay);
-            return;
+    function prefersReducedMotion() {
+        return Boolean(motionQuery && motionQuery.matches);
+    }
+
+    function pause(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    // One step from the symbol the cell shows to `next`. Before the leaf moves, the upper half
+    // behind it already shows `next`; the leaf's front shows the old top and its back the new
+    // bottom. When the leaf lands it covers the lower half exactly, so the lower half can switch
+    // to `next` and the leaf can be hidden in the same frame.
+    async function turnOnce(cell, next, duration) {
+        cell.front.glyph.textContent = cell.symbol;
+        cell.back.glyph.textContent = next;
+        cell.upper.glyph.textContent = next;
+        cell.module.classList.add('is-turning');
+
+        const timing = { duration, easing: FALL_EASING, fill: 'forwards' };
+        const motions = [
+            cell.leaf.animate(LEAF_FALL, timing),
+            cell.front.face.animate(FRONT_DIMMING, timing),
+            cell.back.face.animate(BACK_BRIGHTENING, timing)
+        ];
+
+        try {
+            await Promise.all(motions.map((motion) => motion.finished));
+        } catch (error) {
+            // Cancelled from outside (AbortError): land the flap anyway. Anything else is a bug.
+            if (!error || error.name !== 'AbortError') {
+                throw error;
+            }
         }
 
-        queuedDisplay = null;
-    });
-}
-
-function scheduleFlip(flap, cell, toLetter) {
-    const delay = getFlapDelay(cell.rowIndex, cell.columnIndex);
-
-    return new Promise((resolve) => {
-        window.setTimeout(() => {
-            flipLetter(flap, cell, toLetter, resolve);
-        }, delay);
-    });
-}
-
-function flipLetter(flap, cell, toLetter, resolve) {
-    if (cell.letter === toLetter) {
-        resolve();
-        return;
+        cell.lower.glyph.textContent = next;
+        cell.symbol = next;
+        cell.module.classList.remove('is-turning');
+        motions.forEach((motion) => motion.cancel());
     }
 
-    const prevFlaps = flap.querySelectorAll('.prev span, .front span');
-    const nextFlaps = flap.querySelectorAll('.back span, .next span');
-    const frontFace = flap.querySelector('.front');
-    let next = getNextCharacter(cell.letter);
-    let fastModeEnabled = false;
+    // Wait for the cell's turn in the wave, then step through `path` one symbol at a time.
+    async function spin(cell, path, delay) {
+        await pause(delay);
 
-    frontFace.onanimationiteration = () => {
-        if (next === toLetter) {
-            cell.letter = toLetter;
-            frontFace.onanimationiteration = null;
+        for (let step = 0; step < path.length; step += 1) {
+            if (prefersReducedMotion()) {
+                restOn(cell, path[path.length - 1]);
+                return;
+            }
 
-            flap.classList.remove('animated', 'fast');
-            setText(flap.querySelectorAll('span'), toLetter);
+            await turnOnce(cell, path[step], Logic.stepDuration(step));
+        }
+    }
 
-            window.setTimeout(resolve, 60);
-            return;
+    // Start a run towards the flat `target`. Returns a promise that settles when every moving
+    // cell has landed, or null when there was nothing to animate.
+    function runTowards(target) {
+        const moves = Logic.planRun(shownText(), target, COLUMNS);
+
+        if (moves.length === 0) {
+            return null;
         }
 
-        if (!fastModeEnabled) {
-            fastModeEnabled = true;
-            flap.classList.add('fast');
+        if (!canAnimate || prefersReducedMotion()) {
+            moves.forEach((move) => restOn(cells[move.index], move.path[move.path.length - 1]));
+            return null;
         }
 
-        setText(prevFlaps, next);
-        cell.letter = next;
-        next = getNextCharacter(next);
-
-        window.setTimeout(() => {
-            setText(nextFlaps, next);
-        }, 0);
-    };
-
-    flap.classList.add('animated');
-    setText(nextFlaps, next);
-}
-
-function getDisplayText() {
-    if (previewPhrase) {
-        return previewPhrase;
+        return Promise.all(moves.map((move) => spin(cells[move.index], move.path, move.delay)));
     }
 
-    return Verbatempus.format(new Date(), { level, case: 'upper', charset: 'alpha' });
-}
+    // ---- Board state -----------------------------------------------------------------------
 
-// Fire at the top of every minute, not 60s after whenever the page loaded.
-function scheduleNextMinute(fn) {
-    const delay = 60000 - (Date.now() % 60000);
-    window.setTimeout(() => {
-        fn();
-        scheduleNextMinute(fn);
-    }, delay);
-}
+    function shownText() {
+        return cells.map((cell) => cell.symbol).join('');
+    }
 
-function createBoardState(rows) {
-    return rows.map((row, rowIndex) => row.split('').map((letter, columnIndex) => ({
-        rowIndex,
-        columnIndex,
-        index: rowIndex * BOARD.columns + columnIndex,
-        letter
-    })));
-}
+    function announce(rows) {
+        frame.setAttribute('aria-label', Logic.readableText(rows));
+    }
 
-function applyBoardVariables(element, board) {
-    const variables = {
-        '--board-columns': board.columns,
-        '--board-rows': board.rows,
-        '--cell-width': `${board.cellWidth}px`,
-        '--cell-height': `${board.cellHeight}px`,
-        '--flap-width': `${board.flapWidth}px`,
-        '--flap-height': `${board.flapHeight}px`,
-        '--half-height': `${board.halfHeight}px`,
-        '--board-padding': `${board.boardPadding}px`,
-        '--board-perspective': `${board.perspective}px`,
-        '--display-font-size': `${board.fontSize}px`,
-        '--front-letter-offset': `${board.frontOffset}px`,
-        '--back-letter-offset': `${board.backOffset}px`,
-        '--wave-row-stagger': `${board.timings.rowStagger}ms`,
-        '--wave-column-stagger': `${board.timings.columnStagger}ms`
-    };
+    let phraseRows = null; // ?phrase= never changes, so it is laid out (and warned about) once
 
-    Object.entries(variables).forEach(([name, value]) => {
-        element.style.setProperty(name, String(value));
+    function layoutTarget() {
+        if (options.phrase !== null) {
+            if (phraseRows === null) {
+                phraseRows = Layout.splitIntoRows(Layout.normalizeText(options.phrase), COLUMNS, rowCount);
+            }
+            return phraseRows;
+        }
+
+        const text = Clock.format(new Date(), { level: options.level, case: 'upper', charset: 'alpha' });
+        return Layout.splitIntoRows(text, COLUMNS, rowCount);
+    }
+
+    function update() {
+        const rows = layoutTarget();
+        announce(rows);
+        queue.request(rows.join(''));
+    }
+
+    // ---- Start -----------------------------------------------------------------------------
+
+    const bootRows = Layout.splitIntoRows(Logic.BOOT_MESSAGE, COLUMNS, rowCount);
+    const host = document.querySelector('.container') || document.body;
+    const { frame, cells } = buildBoard(host, bootRows.join(''));
+    announce(bootRows);
+
+    const queue = Logic.createUpdateQueue({
+        initialTarget: bootRows.join(''),
+        readShown: shownText,
+        run: runTowards
     });
-}
 
-function createElement(tag, className) {
-    const element = document.createElement(tag);
-
-    if (className) {
-        element.className = className;
+    // Default: on every wall-clock minute, re-armed each time so it never drifts.
+    function onMinute() {
+        setTimeout(onMinute, Logic.msUntilNextMinute(new Date()));
+        update();
     }
 
-    return element;
-}
+    setTimeout(() => {
+        if (options.interval !== null) {
+            update();
+            setInterval(update, options.interval);
+        } else {
+            onMinute();
+        }
+    }, FIRST_UPDATE_MS);
 
-function setText(elements, text) {
-    elements.forEach((element) => {
-        element.textContent = text;
+    window.SplitFlapBoard = Object.freeze({
+        rows: rowCount,
+        columns: COLUMNS,
+        level: options.level,
+        shownText,
+        targetText: () => queue.latestTarget(),
+        isIdle: () => queue.isIdle()
     });
-}
-
-function createCycleMap(characters) {
-    const mapping = {};
-
-    for (let index = 0; index < characters.length; index += 1) {
-        const character = characters[index];
-        const nextCharacter = characters[(index + 1) % characters.length];
-        mapping[character] = nextCharacter;
-    }
-
-    return mapping;
-}
-
-function getNextCharacter(character) {
-    return cycle[character] || BLANK_CHARACTER;
-}
-
-function getFlapDelay(rowIndex, columnIndex) {
-    const waveDelay = BOARD.timings.initialWaveDelay
-        + (rowIndex * BOARD.timings.rowStagger)
-        + (columnIndex * BOARD.timings.columnStagger);
-
-    return Math.max(0, waveDelay + getMechanicalVariance(rowIndex, columnIndex));
-}
-
-function getMechanicalVariance(rowIndex, columnIndex) {
-    const seed = ((rowIndex + 1) * 17) + ((columnIndex + 1) * 31);
-    const centeredStep = (seed % 7) - 3;
-
-    return centeredStep * BOARD.timings.startVariance;
-}
-
-// ?level=short -> 'short'. Missing or unrecognised falls back to 'verbose'.
-function getConfiguredLevel() {
-    const requested = (queryParams.get('level') || '').toLowerCase();
-
-    return LEVELS.includes(requested) ? requested : 'verbose';
-}
-
-// ?interval=<ms> re-checks on a fixed timer (for previews). Default is the minute boundary.
-function getConfiguredInterval() {
-    const rawInterval = Number(new URLSearchParams(window.location.search).get('interval'));
-
-    if (Number.isFinite(rawInterval) && rawInterval >= 250) {
-        return rawInterval;
-    }
-
-    return null;
-}
+})();

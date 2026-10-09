@@ -24,7 +24,7 @@ The board is 12 columns wide and exactly as tall as the chosen level needs, so n
 
 - Vanilla JavaScript, no build step and no external requests: everything the page loads is in this repository
 - Phrasing comes from the [verbatempus](https://www.npmjs.com/package/verbatempus) library, as its browser bundle in `vendor/`
-- Uses CSS animations for the split-flap effect
+- Each flip is animated with the Web Animations API
 - Updates on the minute boundary
 
 ## Running Locally
@@ -46,14 +46,23 @@ tar -xzf verbatempus-<version>.tgz package/dist/verbatempus.iife.js
 
 Copy `package/dist/verbatempus.iife.js` over `vendor/verbatempus.iife.js`, then run `node --test`.
 
-## Credits
+## How the board is built
 
-The split-flap display animation code is based on Noah Veltman's "Departures board" implementation:
-- Original code: https://gist.github.com/veltman/f2b2a06d4ffa62f4d39d5ebac5ceeef0
-- Author: Noah Veltman (@veltman on GitHub)
+`script.js` and `styles.css` were written from scratch, from the behaviour spec in `docs/display-spec.md`.
+`board-logic.js` holds the pure logic (symbol stepping, the update wave, URL options, the run queue)
+and is covered by `node --test` along with `layout.js`.
+
+## History
+
+Until October 2026 (up to and including commit f8716ec) the flip animation was adapted from Noah
+Veltman's "Departures board" gist (https://gist.github.com/veltman/f2b2a06d4ffa62f4d39d5ebac5ceeef0).
+That gist was published without a licence, so the animation was replaced with an independent
+implementation written only from the spec above. None of that earlier code is in the current version.
+
+## Credits
 
 Roboto Condensed is by Google, under the SIL Open Font License 1.1.
 
 ## License
 
-This project is available under the MIT License. The split-flap animation code is used with permission under its original MIT License from Noah Veltman. See LICENSE for all notices.
+MIT License. See LICENSE for all notices.
