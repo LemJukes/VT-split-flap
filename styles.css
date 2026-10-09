@@ -1,3 +1,12 @@
+/* Roboto Condensed, latin 400, served locally (SIL OFL 1.1, see fonts/OFL.txt) */
+@font-face {
+    font-family: "Roboto Condensed";
+    font-style: normal;
+    font-display: swap;
+    font-weight: 400;
+    src: url("fonts/roboto-condensed-latin-400-normal.woff2") format("woff2");
+}
+
 :root {
     --board-columns: 12;
     --board-rows: 6;

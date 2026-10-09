@@ -1,7 +1,12 @@
-import { getTimeInWords } from './verbatempus-splitflap-core.js';
+// Needs vendor/verbatempus.iife.js (global Verbatempus) and layout.js (global SplitFlapLayout).
+const { BLANK_CHARACTER, normalizeText, wrapWords, splitIntoRows, splitDisplay, rowsForLevel } = SplitFlapLayout;
+
+const LEVELS = ['verbose', 'lengthy', 'short', 'terse'];
+const queryParams = new URLSearchParams(window.location.search);
+const level = getConfiguredLevel();
 
 const BOARD = {
-    rows: 6,
+    rows: 0, // sized below from the phrasing contract
     columns: 12,
     cellWidth: 64,
     cellHeight: 78,
@@ -24,56 +29,71 @@ const BOARD = {
 };
 
 const INITIAL_MESSAGE = 'VERBA TEMPUS A CLOCK FULL OF WORDS';
-const BLANK_CHARACTER = ' ';
 const CHARACTER_SET = `${BLANK_CHARACTER}ABCDEFGHIJKLMNOPQRSTUVWXYZ`;
-const queryParams = new URLSearchParams(window.location.search);
 const previewPhrase = normalizeText(queryParams.get('phrase') || '');
 const cycle = createCycleMap(CHARACTER_SET);
 
-let currentRows = splitIntoRows(INITIAL_MESSAGE);
+// Tall enough for the longest phrase this level can produce, so nothing is ever truncated.
+BOARD.rows = Math.max(
+    rowsForLevel(Verbatempus.format, level, BOARD.columns),
+    wrapWords(INITIAL_MESSAGE, BOARD.columns).length
+);
+
+let currentRows = splitIntoRows(INITIAL_MESSAGE, BOARD.columns, BOARD.rows);
 let currentDisplay = currentRows.join('');
 let isAnimating = false;
 let queuedDisplay = null;
 
-const container = d3.select('.container');
+const container = document.querySelector('.container');
 applyBoardVariables(container, BOARD);
 
-const rowData = createBoardState(currentRows);
-const rowSelection = container
-    .selectAll('.row')
-    .data(rowData)
-    .enter()
-    .append('div')
-    .attr('class', 'row');
-
-const flaps = rowSelection
-    .selectAll('.flap')
-    .data((row) => row)
-    .enter()
-    .append('div')
-    .attr('class', 'flap')
-    .attr('data-row', (cell) => cell.rowIndex)
-    .attr('data-column', (cell) => cell.columnIndex);
-
-['next', 'prev', 'back', 'front'].forEach((segment) => {
-    if (segment === 'front') {
-        flaps.append('div').attr('class', 'divider');
-    }
-
-    flaps
-        .append('div')
-        .attr('class', `half ${segment}`)
-        .append('span')
-        .text((cell) => cell.letter);
-});
+const flaps = buildBoard(container, createBoardState(currentRows));
 
 window.setTimeout(() => {
     updateDisplay();
-    window.setInterval(updateDisplay, BOARD.timings.updateInterval);
+
+    if (BOARD.timings.updateInterval) {
+        window.setInterval(updateDisplay, BOARD.timings.updateInterval);
+    } else {
+        scheduleNextMinute(updateDisplay);
+    }
 }, BOARD.timings.bootDelay);
 
+function buildBoard(root, rowData) {
+    const built = [];
+
+    rowData.forEach((row) => {
+        const rowElement = createElement('div', 'row');
+
+        row.forEach((cell) => {
+            const flap = createElement('div', 'flap');
+            flap.dataset.row = cell.rowIndex;
+            flap.dataset.column = cell.columnIndex;
+
+            ['next', 'prev', 'back', 'front'].forEach((segment) => {
+                if (segment === 'front') {
+                    flap.appendChild(createElement('div', 'divider'));
+                }
+
+                const half = createElement('div', `half ${segment}`);
+                const letter = createElement('span');
+                letter.textContent = cell.letter;
+                half.appendChild(letter);
+                flap.appendChild(half);
+            });
+
+            rowElement.appendChild(flap);
+            built.push({ element: flap, cell });
+        });
+
+        root.appendChild(rowElement);
+    });
+
+    return built;
+}
+
 function updateDisplay() {
-    const nextRows = splitIntoRows(getDisplayText());
+    const nextRows = splitIntoRows(getDisplayText(), BOARD.columns, BOARD.rows);
     const nextDisplay = nextRows.join('');
 
     if (nextDisplay === currentDisplay) {
@@ -92,19 +112,19 @@ function flipToDisplay(targetDisplay) {
     const transitions = [];
     isAnimating = true;
 
-    flaps.each(function schedule(cell) {
+    flaps.forEach(({ element, cell }) => {
         const toLetter = targetDisplay[cell.index] || BLANK_CHARACTER;
 
         if (cell.letter === toLetter) {
             return;
         }
 
-        transitions.push(scheduleFlip(d3.select(this), cell, toLetter));
+        transitions.push(scheduleFlip(element, cell, toLetter));
     });
 
     Promise.all(transitions).then(() => {
         currentDisplay = targetDisplay;
-        currentRows = splitDisplay(currentDisplay);
+        currentRows = splitDisplay(currentDisplay, BOARD.columns);
         isAnimating = false;
 
         if (queuedDisplay && queuedDisplay !== currentDisplay) {
@@ -134,22 +154,19 @@ function flipLetter(flap, cell, toLetter, resolve) {
         return;
     }
 
-    const prevFlaps = flap.selectAll('.prev span, .front span');
-    const nextFlaps = flap.selectAll('.back span, .next span');
-    const frontFace = flap.select('.front');
+    const prevFlaps = flap.querySelectorAll('.prev span, .front span');
+    const nextFlaps = flap.querySelectorAll('.back span, .next span');
+    const frontFace = flap.querySelector('.front');
     let next = getNextCharacter(cell.letter);
     let fastModeEnabled = false;
 
-    frontFace.on('animationiteration.flip', null);
-    frontFace.on('animationiteration.flip', () => {
+    frontFace.onanimationiteration = () => {
         if (next === toLetter) {
             cell.letter = toLetter;
-            frontFace.on('animationiteration.flip', null);
+            frontFace.onanimationiteration = null;
 
-            flap
-                .classed('animated fast', false)
-                .selectAll('span')
-                .text(toLetter);
+            flap.classList.remove('animated', 'fast');
+            setText(flap.querySelectorAll('span'), toLetter);
 
             window.setTimeout(resolve, 60);
             return;
@@ -157,20 +174,20 @@ function flipLetter(flap, cell, toLetter, resolve) {
 
         if (!fastModeEnabled) {
             fastModeEnabled = true;
-            flap.classed('fast', true);
+            flap.classList.add('fast');
         }
 
-        prevFlaps.text(next);
+        setText(prevFlaps, next);
         cell.letter = next;
         next = getNextCharacter(next);
 
         window.setTimeout(() => {
-            nextFlaps.text(next);
+            setText(nextFlaps, next);
         }, 0);
-    });
+    };
 
-    flap.classed('animated', true);
-    nextFlaps.text(next);
+    flap.classList.add('animated');
+    setText(nextFlaps, next);
 }
 
 function getDisplayText() {
@@ -178,59 +195,16 @@ function getDisplayText() {
         return previewPhrase;
     }
 
-    return getTimeInWords();
+    return Verbatempus.format(new Date(), { level, case: 'upper', charset: 'alpha' });
 }
 
-function splitIntoRows(text, columnCount = BOARD.columns, rowCount = BOARD.rows) {
-    const words = normalizeText(text).split(' ').filter(Boolean);
-    const rows = [];
-    let currentRow = '';
-
-    words.forEach((word) => {
-        const candidate = currentRow ? `${currentRow} ${word}` : word;
-
-        if (candidate.length <= columnCount) {
-            currentRow = candidate;
-            return;
-        }
-
-        if (currentRow) {
-            rows.push(currentRow.padEnd(columnCount, BLANK_CHARACTER));
-        }
-
-        if (word.length <= columnCount) {
-            currentRow = word;
-            return;
-        }
-
-        const chunks = chunkWord(word, columnCount);
-        rows.push(...chunks.slice(0, -1).map((chunk) => chunk.padEnd(columnCount, BLANK_CHARACTER)));
-        currentRow = chunks[chunks.length - 1];
-    });
-
-    if (currentRow) {
-        rows.push(currentRow.padEnd(columnCount, BLANK_CHARACTER));
-    }
-
-    if (rows.length > rowCount) {
-        console.warn('Display text exceeds configured board height; truncating overflow.', text);
-    }
-
-    while (rows.length < rowCount) {
-        rows.push(BLANK_CHARACTER.repeat(columnCount));
-    }
-
-    return rows.slice(0, rowCount);
-}
-
-function splitDisplay(display, columnCount = BOARD.columns) {
-    const rows = [];
-
-    for (let index = 0; index < display.length; index += columnCount) {
-        rows.push(display.slice(index, index + columnCount));
-    }
-
-    return rows;
+// Fire at the top of every minute, not 60s after whenever the page loaded.
+function scheduleNextMinute(fn) {
+    const delay = 60000 - (Date.now() % 60000);
+    window.setTimeout(() => {
+        fn();
+        scheduleNextMinute(fn);
+    }, delay);
 }
 
 function createBoardState(rows) {
@@ -242,22 +216,43 @@ function createBoardState(rows) {
     })));
 }
 
-function applyBoardVariables(selection, board) {
-    selection
-        .style('--board-columns', board.columns)
-        .style('--board-rows', board.rows)
-        .style('--cell-width', `${board.cellWidth}px`)
-        .style('--cell-height', `${board.cellHeight}px`)
-        .style('--flap-width', `${board.flapWidth}px`)
-        .style('--flap-height', `${board.flapHeight}px`)
-        .style('--half-height', `${board.halfHeight}px`)
-        .style('--board-padding', `${board.boardPadding}px`)
-        .style('--board-perspective', `${board.perspective}px`)
-        .style('--display-font-size', `${board.fontSize}px`)
-        .style('--front-letter-offset', `${board.frontOffset}px`)
-        .style('--back-letter-offset', `${board.backOffset}px`)
-        .style('--wave-row-stagger', `${board.timings.rowStagger}ms`)
-        .style('--wave-column-stagger', `${board.timings.columnStagger}ms`);
+function applyBoardVariables(element, board) {
+    const variables = {
+        '--board-columns': board.columns,
+        '--board-rows': board.rows,
+        '--cell-width': `${board.cellWidth}px`,
+        '--cell-height': `${board.cellHeight}px`,
+        '--flap-width': `${board.flapWidth}px`,
+        '--flap-height': `${board.flapHeight}px`,
+        '--half-height': `${board.halfHeight}px`,
+        '--board-padding': `${board.boardPadding}px`,
+        '--board-perspective': `${board.perspective}px`,
+        '--display-font-size': `${board.fontSize}px`,
+        '--front-letter-offset': `${board.frontOffset}px`,
+        '--back-letter-offset': `${board.backOffset}px`,
+        '--wave-row-stagger': `${board.timings.rowStagger}ms`,
+        '--wave-column-stagger': `${board.timings.columnStagger}ms`
+    };
+
+    Object.entries(variables).forEach(([name, value]) => {
+        element.style.setProperty(name, String(value));
+    });
+}
+
+function createElement(tag, className) {
+    const element = document.createElement(tag);
+
+    if (className) {
+        element.className = className;
+    }
+
+    return element;
+}
+
+function setText(elements, text) {
+    elements.forEach((element) => {
+        element.textContent = text;
+    });
 }
 
 function createCycleMap(characters) {
@@ -291,24 +286,14 @@ function getMechanicalVariance(rowIndex, columnIndex) {
     return centeredStep * BOARD.timings.startVariance;
 }
 
-function chunkWord(word, size) {
-    const chunks = [];
+// ?level=short -> 'short'. Missing or unrecognised falls back to 'verbose'.
+function getConfiguredLevel() {
+    const requested = (queryParams.get('level') || '').toLowerCase();
 
-    for (let index = 0; index < word.length; index += size) {
-        chunks.push(word.slice(index, index + size));
-    }
-
-    return chunks;
+    return LEVELS.includes(requested) ? requested : 'verbose';
 }
 
-function normalizeText(text) {
-    return text
-        .toUpperCase()
-        .replace(/[^A-Z\s]/g, BLANK_CHARACTER)
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
+// ?interval=<ms> re-checks on a fixed timer (for previews). Default is the minute boundary.
 function getConfiguredInterval() {
     const rawInterval = Number(new URLSearchParams(window.location.search).get('interval'));
 
@@ -316,5 +301,5 @@ function getConfiguredInterval() {
         return rawInterval;
     }
 
-    return 60000;
+    return null;
 }
